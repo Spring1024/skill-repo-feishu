@@ -33,7 +33,7 @@ import httpx
 
 # 默认配置（可从环境变量覆盖）
 DEFAULT_APP_ID = os.getenv("FEISHU_APP_ID", "cli_aada30be933adcba")
-DEFAULT_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "O8ePQfHizivRmPxPZZwMQgxFWWsjfG2W")
+DEFAULT_APP_SECRET = os.getenv("FEISHU_APP_SECRET", ""${FEISHU_APP_SECRET}"")
 DEFAULT_CHAT_ID = os.getenv("FEISHU_CHAT_ID", "oc_7da955a1c5eab6d20bf62adf4fcd930b")
 DEFAULT_API_BASE = "https://open.feishu.cn"
 

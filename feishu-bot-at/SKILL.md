@@ -102,7 +102,7 @@ import httpx
 import json
 
 app_id = 'cli_aada30be933adcba'
-app_secret = 'O8ePQfHizivRmPxPZZwMQgxFWWsjfG2W'
+app_secret = '"${FEISHU_APP_SECRET}"'
 chat_id = 'oc_7da955a1c5eab6d20bf62adf4fcd930b'
 target_open_id = 'ou_xxx'  # 从 Step 1 获取
 target_name = '波比'
