@@ -42,8 +42,14 @@ if not APP_ID or not APP_SECRET:
         "  FEISHU_APP_SECRET=xxx"
     )
 
-# 目标群聊 ID
-CHAT_ID = os.getenv("FEISHU_HOME_CHANNEL", "oc_7da955a1c5eab6d20bf62adf4fcd930b")
+# 目标群聊 ID（必须通过环境变量配置）
+CHAT_ID = os.getenv("FEISHU_HOME_CHANNEL")
+
+if not CHAT_ID:
+    raise EnvironmentError(
+        "未指定目标群聊。请设置环境变量：\n"
+        "  export FEISHU_HOME_CHANNEL=oc_群聊ID"
+    )
 
 # 飞书域名
 DOMAIN = os.getenv("FEISHU_DOMAIN", "feishu")
