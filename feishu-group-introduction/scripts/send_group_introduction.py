@@ -153,7 +153,12 @@ def read_soul_content() -> str:
 
 def extract_raw_identity(soul_content: str) -> dict:
     """
-    从 SOUL.md 内容中提取原始身份信息（不做归纳，只提取）。
+    从 SOUL.md 内容中提取原始身份信息（通用型解析）。
+    
+    适配各种格式的 SOUL.md，包括：
+    - 标准格式：# Identity 段落
+    - 变体格式：# 核心身份、# 角色定义、# 身份介绍 等
+    - 无标题格式：直接从第一行提取名称
     
     Args:
         soul_content: SOUL.md 的完整内容
@@ -171,57 +176,144 @@ def extract_raw_identity(soul_content: str) -> dict:
     lines = soul_content.split('\n')
     
     # ------------------------------------------------------------------
-    # 1. 提取 Identity 段落
+    # 1. 提取名称（多种格式适配）
     # ------------------------------------------------------------------
-    identity_lines = []
-    in_identity = False
     
+    # 尝试 1: 从标题行提取（如 "# 芙蓉：严谨务实型产品经理"）
     for line in lines:
-        if line.startswith('# Identity'):
-            in_identity = True
-            continue
-        
-        if in_identity:
-            if line.startswith('# ') and line != '# Identity':
+        stripped = line.strip()
+        if stripped.startswith('#') and not stripped.startswith('##'):
+            # 提取 "# 芙蓉：xxx" 或 "# 芙蓉 - xxx" 或 "# 芙蓉"
+            name_match = re.match(r'^#\s+([^\s：:—-]+)', stripped)
+            if name_match:
+                identity["name"] = name_match.group(1).strip()
                 break
-            if line.strip():
-                identity_lines.append(line.strip())
+    
+    # 尝试 2: 从 "你是 XXX" 提取
+    if identity["name"] == "未知助手":
+        for line in lines:
+            name_match = re.search(r'你是\s*([^\s（(]+)', line)
+            if name_match:
+                identity["name"] = name_match.group(1).strip()
+                break
+    
+    # 尝试 3: 从 frontmatter 提取（如 ---\nname: xxx\n---）
+    if identity["name"] == "未知助手":
+        fm_match = re.search(r'---\s*\n.*?name:\s*(.+?)\s*\n---', soul_content, re.DOTALL)
+        if fm_match:
+            identity["name"] = fm_match.group(1).strip()
     
     # ------------------------------------------------------------------
-    # 2. 从 Identity 段落提取信息
+    # 2. 提取核心职责（多种段落适配）
     # ------------------------------------------------------------------
-    if identity_lines:
-        # 名称：第一行中 "你是 XXX" 的部分
-        name_match = re.search(r'你是\s*([^\s（(]+)', identity_lines[0])
-        if name_match:
-            identity["name"] = name_match.group(1).strip()
-        
-        # 核心职责：前 3 句
-        if len(identity_lines) > 1:
-            identity["responsibility"] = '\n'.join(identity_lines[:3])
-        
-        # 团队角色：第 4-6 句
-        if len(identity_lines) > 3:
-            identity["team_role"] = '\n'.join(identity_lines[3:6])
+    
+    # 尝试 1: 从 # Identity 或 # 核心身份 或 # 角色定义 段落提取
+    target_sections = ['# Identity', '# 核心身份', '# 角色定义', '# 身份介绍', '# 核心']
+    responsibility_lines = []
+    
+    for section in target_sections:
+        in_section = False
+        for line in lines:
+            if line.strip().startswith(section):
+                in_section = True
+                continue
+            if in_section:
+                if line.strip().startswith('## '):
+                    break
+                if line.strip():
+                    responsibility_lines.append(line.strip())
+                if len(responsibility_lines) >= 3:
+                    break
+        if responsibility_lines:
+            break
+    
+    # 尝试 2: 从第一段的 bullet points 提取
+    if not responsibility_lines:
+        in_first_section = False
+        bullet_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('-') or stripped.startswith('*'):
+                if not in_first_section:
+                    in_first_section = True
+                bullet_lines.append(stripped[1:].strip())
+                if len(bullet_lines) >= 3:
+                    break
+            elif in_first_section and stripped:
+                bullet_lines.append(stripped)
+                if len(bullet_lines) >= 3:
+                    break
+        responsibility_lines = bullet_lines
+    
+    # 尝试 3: 从 "核心职责" 或 "角色" 关键词提取
+    if not responsibility_lines:
+        for line in lines:
+            if '核心职责' in line or '角色' in line:
+                responsibility_lines.append(line.strip())
+                if len(responsibility_lines) >= 3:
+                    break
+    
+    if responsibility_lines:
+        identity["responsibility"] = '\n'.join(responsibility_lines[:3])
     
     # ------------------------------------------------------------------
-    # 3. 提取协作规则（从 # A2A Collaboration 或 # 协作 段落）
+    # 3. 提取团队角色
     # ------------------------------------------------------------------
+    
+    # 尝试 1: 从 # 团队角色 或 # Role 段落提取
+    target_sections_role = ['# 团队角色', '# Role', '# 角色', '# 团队']
+    team_role_lines = []
+    
+    for section in target_sections_role:
+        in_section = False
+        for line in lines:
+            if line.strip().startswith(section):
+                in_section = True
+                continue
+            if in_section:
+                if line.strip().startswith('## '):
+                    break
+                if line.strip():
+                    team_role_lines.append(line.strip())
+                if len(team_role_lines) >= 3:
+                    break
+        if team_role_lines:
+            break
+    
+    # 尝试 2: 从核心职责中提取团队角色相关的句子
+    if not team_role_lines and identity["responsibility"]:
+        for line in identity["responsibility"].split('\n'):
+            if '团队' in line or 'Leader' in line or '负责' in line:
+                team_role_lines.append(line)
+                if len(team_role_lines) >= 2:
+                    break
+    
+    if team_role_lines:
+        identity["team_role"] = '\n'.join(team_role_lines[:2])
+    
+    # ------------------------------------------------------------------
+    # 4. 提取协作规则
+    # ------------------------------------------------------------------
+    
+    # 尝试 1: 从 # A2A Collaboration 或 # 协作 段落提取
+    target_sections_collab = ['# A2A Collaboration', '# 协作', '# 协作规则']
     collab_lines = []
-    in_collab = False
     
-    for line in lines:
-        if re.match(r'#.*(协作|A2A Collaboration)', line, re.IGNORECASE):
-            in_collab = True
-            continue
-        
-        if in_collab:
-            if line.startswith('# '):
-                break
-            if line.strip():
-                collab_lines.append(line.strip())
-            if len(collab_lines) >= 5:
-                break
+    for section in target_sections_collab:
+        in_section = False
+        for line in lines:
+            if line.strip().startswith(section):
+                in_section = True
+                continue
+            if in_section:
+                if line.strip().startswith('## '):
+                    break
+                if line.strip():
+                    collab_lines.append(line.strip())
+                if len(collab_lines) >= 5:
+                    break
+        if collab_lines:
+            break
     
     if collab_lines:
         identity["collaboration_rules"] = '\n'.join(collab_lines[:3])
