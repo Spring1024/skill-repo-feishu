@@ -408,8 +408,13 @@ def generate_introduction(identity: dict) -> str:
     """
     根据提取的身份信息生成简洁的介绍文本。
     
+    生成策略：
+    1. 使用 Markdown 格式增强可读性
+    2. 突出关键信息（名称、职责、角色、open_id）
+    3. 保持简洁（不超过 500 字）
+    
     Args:
-        identity: 身份信息字典（可能经过 LLM 归纳）
+        identity: 身份信息字典
         
     Returns:
         格式化的介绍文本
@@ -419,11 +424,6 @@ def generate_introduction(identity: dict) -> str:
     responsibility = identity.get("responsibility", "无")
     team_role = identity.get("team_role", "无")
     collab_rules = identity.get("collaboration_rules", "无")
-    intro_summary = identity.get("intro_summary", f"大家好！我是{name}。")
-    
-    # 如果 intro_summary 不存在，使用 name 生成
-    if not intro_summary or intro_summary == "":
-        intro_summary = f"大家好！我是{name}。"
     
     # 协作规则默认值
     if not collab_rules or collab_rules == "无":
@@ -434,7 +434,9 @@ def generate_introduction(identity: dict) -> str:
         )
     
     lines = [
-        intro_summary,
+        f"**大家好！我是{name}。**",
+        "",
+        f"**我的 open_id**：`{open_id}`",
         "",
         f"**核心职责**：{responsibility}",
         "",
@@ -443,7 +445,7 @@ def generate_introduction(identity: dict) -> str:
         "**协作方式**：",
         collab_rules,
         "",
-        f"💡 **联系方式**：在本群聊中 @我 即可",
+        "💡 **联系方式**：在本群聊中 @我 即可",
     ]
     
     return "\n".join(lines)
