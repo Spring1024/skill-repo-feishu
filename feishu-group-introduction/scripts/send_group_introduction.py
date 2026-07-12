@@ -96,13 +96,13 @@ def read_soul_content() -> str:
 
 def extract_bot_identity(soul_content: str) -> dict:
     """
-    从 SOUL.md 内容中提取身份信息并智能提炼
+    从 SOUL.md 内容中提取身份信息 — 通用段落解析（非正则）
     
     提取策略：
-    1. 名称：从 "# Identity" 段落提取
-    2. 核心职责：从 "# Core Principles" 或 "# Identity" 提取
-    3. 团队角色：从 "# Identity" 中的 "团队统帅" 部分提取
-    4. 协作规则：从 "# A2A Collaboration" 或相关段落提取
+    1. 名称：从 "# Identity" 段落的第一行提取
+    2. 核心职责：从 "# Identity" 段落的前 3 句
+    3. 团队角色：从 "# Identity" 段落的第 4-6 句
+    4. 协作规则：从 "# A2A Collaboration" 或 "# 协作" 段落提取前 3 条
     
     Args:
         soul_content: SOUL.md 的完整内容
@@ -123,47 +123,66 @@ def extract_bot_identity(soul_content: str) -> dict:
         "collaboration_rules": "",
     }
     
-    # ------------------------------------------------------------------
-    # 1. 提取名称
-    # ------------------------------------------------------------------
-    # 匹配模式："你是 XXX（XXX）" 或 "你是 XXX"
-    name_match = re.search(r'你是\s*([^\s（(]+)', soul_content)
-    if name_match:
-        identity["name"] = name_match.group(1).strip()
+    lines = soul_content.split('\n')
     
     # ------------------------------------------------------------------
-    # 2. 提取核心职责
+    # 1. 提取 Identity 段落
     # ------------------------------------------------------------------
-    # 匹配模式："核心职责[：:]xxx"
-    resp_match = re.search(r'核心职责[：:]\s*(.+?)(?:\n|$)', soul_content, re.IGNORECASE)
-    if resp_match:
-        identity["responsibility"] = resp_match.group(1).strip()
+    identity_lines = []
+    in_identity = False
+    
+    for line in lines:
+        if line.startswith('# Identity'):
+            in_identity = True
+            continue
+        
+        if in_identity:
+            if line.startswith('# ') and line != '# Identity':
+                break
+            if line.strip():
+                identity_lines.append(line.strip())
     
     # ------------------------------------------------------------------
-    # 3. 提取团队角色
+    # 2. 从 Identity 段落提取信息
     # ------------------------------------------------------------------
-    # 匹配模式："团队统帅[：:]xxx"
-    role_match = re.search(r'团队统帅[：:]\s*(.+?)(?:\n|$)', soul_content, re.IGNORECASE)
-    if role_match:
-        identity["team_role"] = role_match.group(1).strip()
+    if identity_lines:
+        # 名称：第一行中 "你是 XXX" 的部分
+        name_match = re.search(r'你是\s*([^\s（(]+)', identity_lines[0])
+        if name_match:
+            identity["name"] = name_match.group(1).strip()
+        
+        # 核心职责：前 3 句
+        if len(identity_lines) > 1:
+            identity["responsibility"] = '\n'.join(identity_lines[:3])
+        
+        # 团队角色：第 4-6 句
+        if len(identity_lines) > 3:
+            identity["team_role"] = '\n'.join(identity_lines[3:6])
     
     # ------------------------------------------------------------------
-    # 4. 提取协作规则
+    # 3. 提取协作规则（从 # A2A Collaboration 或 # 协作 段落）
     # ------------------------------------------------------------------
-    # 匹配模式：从 "# A2A Collaboration" 或 "# 协作规则" 段落提取要点
-    collab_section = re.search(
-        r'(?:协作规则[：:]|A2A Collaboration.*?协作规则[：:]\s*)(.*?)(?:\n\n|\n#{1,6}\s|$)',
-        soul_content,
-        re.DOTALL | re.IGNORECASE
-    )
-    if collab_section:
-        rules_text = collab_section.group(1).strip()
-        # 简化：只保留前 3 条规则
-        rules_lines = [line.strip() for line in rules_text.split('\n') if line.strip()]
-        identity["collaboration_rules"] = '\n'.join(rules_lines[:3])
+    collab_lines = []
+    in_collab = False
+    
+    for line in lines:
+        if re.match(r'#.*(协作|A2A Collaboration)', line, re.IGNORECASE):
+            in_collab = True
+            continue
+        
+        if in_collab:
+            if line.startswith('# ') and line != line:
+                break
+            if line.strip():
+                collab_lines.append(line.strip())
+            if len(collab_lines) >= 5:
+                break
+    
+    if collab_lines:
+        identity["collaboration_rules"] = '\n'.join(collab_lines[:3])
     
     # ------------------------------------------------------------------
-    # 5. 尝试获取 open_id（从缓存或环境变量）
+    # 4. 尝试获取 open_id（从缓存或环境变量）
     # ------------------------------------------------------------------
     cache_path = os.path.expanduser("~/.hermes/fbc-cache/registry.json")
     if os.path.exists(cache_path):
@@ -178,7 +197,6 @@ def extract_bot_identity(soul_content: str) -> dict:
         except Exception:
             pass
     
-    # 如果缓存中没有，尝试从环境变量获取
     if not identity["open_id"]:
         identity["open_id"] = os.getenv("FEISHU_BOT_OPEN_ID", "")
     
