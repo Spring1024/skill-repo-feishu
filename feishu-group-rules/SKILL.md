@@ -322,3 +322,40 @@
 ## 许可证
 
 MIT License
+
+## 安装说明
+
+### 自动安装（推荐）
+
+```bash
+# 安装规范到 SOUL.md
+python3 ~/.hermes/skills/feishu-group-rules/scripts/install.py install
+
+# 检查安装状态
+python3 ~/.hermes/skills/feishu-group-rules/scripts/install.py status
+
+# 卸载规范
+python3 ~/.hermes/skills/feishu-group-rules/scripts/install.py uninstall
+```
+
+### 手动安装
+
+1. 克隆仓库
+```bash
+git clone git@github.com:Spring1024/skill-repo-feishu.git
+```
+
+2. 复制 Skill 到本地
+```bash
+cp -r skill-repo-feishu/feishu-group-rules ~/.hermes/skills/
+```
+
+3. 运行安装脚本
+```bash
+python3 ~/.hermes/skills/feishu-group-rules/scripts/install.py install
+```
+
+4. 重启 Gateway
+```bash
+hermes gateway restart
+```
