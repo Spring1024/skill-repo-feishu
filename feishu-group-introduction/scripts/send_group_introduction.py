@@ -3,10 +3,11 @@
 飞书群聊身份介绍发送脚本 - Skill 版
 
 功能：
-1. 从 SOUL.md 自动提取身份信息
-2. 智能提炼核心职责和角色描述
-3. @所有人并发送身份介绍
-4. 使用 post 类型消息确保 @all 正确渲染
+1. 从飞书 API 获取最新 open_id（优先）
+2. 从 SOUL.md 提取身份信息
+3. 使用 LLM 对信息进行归纳提炼
+4. @所有人并发送身份介绍
+5. 使用 post 类型消息确保 @all 正确渲染
 
 用法：
     python3 send_group_introduction.py
@@ -16,7 +17,7 @@
 
 作者：波比 (Bobo)
 日期：2026-07-11
-版本：v1.0.0
+版本：v1.0.1（修复 open_id 获取 + LLM 归纳）
 """
 
 import asyncio
@@ -25,6 +26,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Optional
 
 
 # =========================================================================
@@ -55,6 +57,61 @@ if not CHAT_ID:
 DOMAIN = os.getenv("FEISHU_DOMAIN", "feishu")
 base = "https://open.larksuite.com" if DOMAIN == "lark" else "https://open.feishu.cn"
 
+# LLM 配置（可选，用于归纳提炼 SOUL.md 内容）
+LLM_API_URL = os.getenv("LLM_API_URL", "")  # 如 https://api.anthropic.com/v1/messages
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
+
+
+# =========================================================================
+# 飞书 API 客户端
+# =========================================================================
+
+async def get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
+    """获取 tenant_access_token。"""
+    base_url = "https://open.larksuite.com" if domain == "lark" else "https://open.feishu.cn"
+    url = f"{base_url}/open-apis/auth/v3/tenant_access_token/internal"
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json={'app_id': app_id, 'app_secret': app_secret})
+        data = resp.json()
+        
+        if data.get('code') != 0:
+            raise RuntimeError(f"Token 获取失败: {data}")
+        
+        return data['tenant_access_token']
+
+
+async def get_bot_open_id(app_id: str, app_secret: str, domain: str) -> Optional[str]:
+    """
+    通过飞书 API 获取当前 Bot 的 open_id（优先方式）。
+    
+    这是最可靠的方式，因为 open_id 可能在不同环境下变化。
+    
+    Returns:
+        Bot 的 open_id，获取失败返回 None
+    """
+    base_url = "https://open.larksuite.com" if domain == "lark" else "https://open.feishu.cn"
+    token = await get_tenant_token(app_id, app_secret, domain)
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{base_url}/open-apis/bot/v3/info",
+            headers={'Authorization': f'Bearer {token}'}
+        )
+        data = resp.json()
+        
+        if data.get('code') != 0:
+            print(f"   ⚠️ 获取 Bot 信息失败: {data.get('msg')}")
+            return None
+        
+        bot_info = data.get('bot', {})
+        open_id = bot_info.get('open_id', '')
+        app_name = bot_info.get('app_name', '')
+        
+        print(f"   ✅ Bot 信息: {app_name} (open_id: {open_id})")
+        return open_id
+
 
 # =========================================================================
 # SOUL.md 解析器
@@ -62,7 +119,7 @@ base = "https://open.larksuite.com" if DOMAIN == "lark" else "https://open.feish
 
 def find_soul_file() -> str:
     """
-    查找 SOUL.md 文件位置
+    查找 SOUL.md 文件位置。
     
     搜索路径（按优先级）：
     1. $HERMES_HOME/SOUL.md
@@ -88,36 +145,24 @@ def find_soul_file() -> str:
 
 
 def read_soul_content() -> str:
-    """读取 SOUL.md 文件内容"""
+    """读取 SOUL.md 文件内容。"""
     soul_path = find_soul_file()
     with open(soul_path, 'r', encoding='utf-8') as f:
         return f.read()
 
 
-def extract_bot_identity(soul_content: str) -> dict:
+def extract_raw_identity(soul_content: str) -> dict:
     """
-    从 SOUL.md 内容中提取身份信息 — 通用段落解析（非正则）
-    
-    提取策略：
-    1. 名称：从 "# Identity" 段落的第一行提取
-    2. 核心职责：从 "# Identity" 段落的前 3 句
-    3. 团队角色：从 "# Identity" 段落的第 4-6 句
-    4. 协作规则：从 "# A2A Collaboration" 或 "# 协作" 段落提取前 3 条
+    从 SOUL.md 内容中提取原始身份信息（不做归纳，只提取）。
     
     Args:
         soul_content: SOUL.md 的完整内容
         
     Returns:
-        包含以下字段的字典：
-        - name: Bot 名称
-        - open_id: 飞书 open_id（如果已知）
-        - responsibility: 核心职责
-        - team_role: 团队角色描述
-        - collaboration_rules: 协作规则要点
+        包含原始信息的字典
     """
     identity = {
         "name": "未知助手",
-        "open_id": "",
         "responsibility": "",
         "team_role": "",
         "collaboration_rules": "",
@@ -171,7 +216,7 @@ def extract_bot_identity(soul_content: str) -> dict:
             continue
         
         if in_collab:
-            if line.startswith('# ') and line != line:
+            if line.startswith('# '):
                 break
             if line.strip():
                 collab_lines.append(line.strip())
@@ -181,39 +226,98 @@ def extract_bot_identity(soul_content: str) -> dict:
     if collab_lines:
         identity["collaboration_rules"] = '\n'.join(collab_lines[:3])
     
-    # ------------------------------------------------------------------
-    # 4. 尝试获取 open_id（从缓存或环境变量）
-    # ------------------------------------------------------------------
-    cache_path = os.path.expanduser("~/.hermes/fbc-cache/registry.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, 'r') as f:
-                cache_data = json.load(f)
-                bots = cache_data.get("bots", {})
-                for key, bot_info in bots.items():
-                    if bot_info.get("is_self"):
-                        identity["open_id"] = bot_info.get("bot_open_id", "")
-                        break
-        except Exception:
-            pass
-    
-    if not identity["open_id"]:
-        identity["open_id"] = os.getenv("FEISHU_BOT_OPEN_ID", "")
-    
     return identity
 
 
-def generate_introduction(identity: dict) -> str:
+async def summarize_with_llm(raw_identity: dict, soul_content: str) -> dict:
     """
-    根据提取的身份信息生成简洁的介绍文本
+    使用 LLM 对 SOUL.md 内容进行归纳提炼。
     
-    生成策略：
-    1. 使用 Markdown 格式增强可读性
-    2. 突出关键信息（名称、职责、角色）
-    3. 保持简洁（不超过 500 字）
+    如果 LLM API 不可用，则返回原始信息。
     
     Args:
-        identity: 身份信息字典
+        raw_identity: 从 SOUL.md 提取的原始身份信息
+        soul_content: SOUL.md 的完整内容
+        
+    Returns:
+        经过 LLM 归纳提炼的身份信息
+    """
+    # 如果没有配置 LLM，直接返回原始信息
+    if not LLM_API_URL or not LLM_API_KEY:
+        print("   ℹ️  未配置 LLM API，使用原始信息（未归纳）")
+        return raw_identity
+    
+    # 构建 prompt
+    prompt = f"""你是一个专业的产品经理助手。请根据以下 SOUL.md 内容，为这个 AI Bot 生成一份简洁、专业的群聊身份介绍。
+
+## 原始身份信息
+
+**名称**: {raw_identity.get('name', '未知助手')}
+**核心职责**: {raw_identity.get('responsibility', '无')}
+**团队角色**: {raw_identity.get('team_role', '无')}
+**协作规则**: {raw_identity.get('collaboration_rules', '无')}
+
+## SOUL.md 全文
+
+```markdown
+{soul_content[:3000]}
+```
+
+## 要求
+
+请生成以下字段（保持简洁，每个字段不超过 100 字）：
+
+1. **name**: Bot 名称（保持不变）
+2. **responsibility**: 核心职责（用 1-2 句话概括，突出核心价值）
+3. **team_role**: 团队角色（用 1 句话描述在团队中的定位）
+4. **collaboration_rules**: 协作方式（用 3 条 bullet points 概括）
+5. **intro_summary**: 一句话自我介绍（用于开场白）
+
+请以 JSON 格式返回，不要包含其他内容。"""
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                LLM_API_URL,
+                headers={
+                    'Authorization': f'Bearer {LLM_API_KEY}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': LLM_MODEL,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': 1000,
+                }
+            )
+            data = resp.json()
+            
+            # 提取 LLM 返回的内容
+            content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            
+            # 尝试解析 JSON
+            try:
+                summarized = json.loads(content)
+                print("   ✅ LLM 归纳完成")
+                return summarized
+            except json.JSONDecodeError:
+                print("   ⚠️  LLM 返回格式不合法，使用原始信息")
+                return raw_identity
+                
+    except Exception as e:
+        print(f"   ⚠️  LLM 调用失败: {e}，使用原始信息")
+        return raw_identity
+
+
+# =========================================================================
+# 消息生成
+# =========================================================================
+
+def generate_introduction(identity: dict) -> str:
+    """
+    根据提取的身份信息生成简洁的介绍文本。
+    
+    Args:
+        identity: 身份信息字典（可能经过 LLM 归纳）
         
     Returns:
         格式化的介绍文本
@@ -223,9 +327,14 @@ def generate_introduction(identity: dict) -> str:
     responsibility = identity.get("responsibility", "无")
     team_role = identity.get("team_role", "无")
     collab_rules = identity.get("collaboration_rules", "无")
+    intro_summary = identity.get("intro_summary", f"大家好！我是{name}。")
+    
+    # 如果 intro_summary 不存在，使用 name 生成
+    if not intro_summary or intro_summary == "":
+        intro_summary = f"大家好！我是{name}。"
     
     # 协作规则默认值
-    if not collab_rules:
+    if not collab_rules or collab_rules == "无":
         collab_rules = (
             "- 在群聊中通过 <at> 标签与其他机器人协作\n"
             "- 任务型 @：需要对方执行任务时使用\n"
@@ -233,9 +342,7 @@ def generate_introduction(identity: dict) -> str:
         )
     
     lines = [
-        f"**大家好！我是{name}。**",
-        "",
-        f"我的 open_id: `{open_id}`",
+        intro_summary,
         "",
         f"**核心职责**：{responsibility}",
         "",
@@ -244,43 +351,15 @@ def generate_introduction(identity: dict) -> str:
         "**协作方式**：",
         collab_rules,
         "",
-        "💡 **联系方式**：在本群聊中 @我 即可",
+        f"💡 **联系方式**：在本群聊中 @我 即可",
     ]
     
     return "\n".join(lines)
 
 
 # =========================================================================
-# 飞书 API 客户端
+# 飞书消息发送
 # =========================================================================
-
-async def get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
-    """
-    获取 tenant_access_token
-    
-    Args:
-        app_id: 飞书应用 App ID
-        app_secret: 飞书应用 App Secret
-        domain: 飞书域名（feishu 或 lark）
-        
-    Returns:
-        tenant_access_token 字符串
-        
-    Raises:
-        RuntimeError: Token 获取失败
-    """
-    base_url = "https://open.larksuite.com" if domain == "lark" else "https://open.feishu.cn"
-    url = f"{base_url}/open-apis/auth/v3/tenant_access_token/internal"
-    
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, json={'app_id': app_id, 'app_secret': app_secret})
-        data = resp.json()
-        
-        if data.get('code') != 0:
-            raise RuntimeError(f"Token 获取失败: {data}")
-        
-        return data['tenant_access_token']
-
 
 async def send_message_to_group(
     token: str,
@@ -289,7 +368,7 @@ async def send_message_to_group(
     mention_all: bool = True
 ) -> dict:
     """
-    向飞书群聊发送消息
+    向飞书群聊发送消息。
     
     Args:
         token: tenant_access_token
@@ -312,9 +391,9 @@ async def send_message_to_group(
             {"tag": "at", "user_id": "all", "user_name": "所有人"}
         ])
     
-    # 第 2 行：身份介绍（使用 lark_md 支持换行和排版）
+    # 第 2 行：身份介绍（使用 md 格式）
     content_array.append([
-        {"tag": "lark_md", "text": content}
+        {"tag": "md", "text": content}
     ])
     
     # 构建完整的 payload
@@ -347,24 +426,57 @@ async def send_message_to_group(
 
 async def send_group_introduction():
     """
-    主函数：向飞书群聊发送身份介绍
+    主函数：向飞书群聊发送身份介绍。
     
     流程：
-    1. 读取 SOUL.md 文件
-    2. 提取身份信息
-    3. 生成介绍文本
-    4. 调用飞书 API 发送消息
-    5. 输出结果
+    1. 通过飞书 API 获取最新 open_id（优先）
+    2. 读取 SOUL.md 文件
+    3. 提取原始身份信息
+    4. 使用 LLM 归纳提炼（可选）
+    5. 生成介绍文本
+    6. 调用飞书 API 发送消息
+    7. 输出结果
     """
     print("=" * 60)
-    print("飞书群聊身份介绍发送脚本 - Skill 版")
+    print("飞书群聊身份介绍发送脚本 - Skill 版 v1.0.1")
     print("=" * 60)
     print()
     
     # ------------------------------------------------------------------
-    # 步骤 1: 读取并解析 SOUL.md
+    # 步骤 1: 获取 open_id（优先通过飞书 API）
     # ------------------------------------------------------------------
-    print("📖 读取 SOUL.md...")
+    print("🔑 获取 open_id（通过飞书 API）...")
+    open_id: Optional[str] = await get_bot_open_id(str(APP_ID), str(APP_SECRET), DOMAIN)
+    
+    if not open_id:
+        print("   ⚠️  API 获取失败，尝试从缓存/环境变量回退...")
+        # 回退到缓存文件
+        cache_path = os.path.expanduser("~/.hermes/fbc-cache/registry.json")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'r') as f:
+                    cache_data = json.load(f)
+                    bots = cache_data.get("bots", {})
+                    for key, bot_info in bots.items():
+                        if bot_info.get("is_self"):
+                            open_id = bot_info.get("bot_open_id", "")
+                            break
+            except Exception:
+                pass
+        
+        # 最后回退到环境变量
+        if not open_id:
+            open_id = os.getenv("FEISHU_BOT_OPEN_ID", "")
+            if open_id:
+                print(f"   ℹ️  从环境变量获取: {open_id}")
+            else:
+                print("   ❌ 无法获取 open_id")
+                return
+    
+    # ------------------------------------------------------------------
+    # 步骤 2: 读取并解析 SOUL.md
+    # ------------------------------------------------------------------
+    print("\n📖 读取 SOUL.md...")
     try:
         soul_content = read_soul_content()
         print(f"   ✅ 成功读取 SOUL.md ({len(soul_content)} 字符)")
@@ -375,27 +487,42 @@ async def send_group_introduction():
         print(f"   ❌ 读取失败: {e}")
         return
     
-    print("\n🔍 提取身份信息...")
-    identity = extract_bot_identity(soul_content)
+    print("\n🔍 提取原始身份信息...")
+    raw_identity = extract_raw_identity(soul_content)
     
-    print(f"   名称: {identity['name']}")
-    print(f"   open_id: {identity['open_id'] or '未配置'}")
-    print(f"   核心职责: {identity['responsibility'][:50]}..." if len(identity['responsibility']) > 50 else f"   核心职责: {identity['responsibility']}")
-    print(f"   团队角色: {identity['team_role'][:50]}..." if len(identity['team_role']) > 50 else f"   团队角色: {identity['team_role']}")
+    print(f"   名称: {raw_identity['name']}")
+    print(f"   open_id: {open_id}")
+    print(f"   核心职责: {raw_identity['responsibility'][:50]}..." if len(raw_identity['responsibility']) > 50 else f"   核心职责: {raw_identity['responsibility']}")
     
     # ------------------------------------------------------------------
-    # 步骤 2: 生成介绍文本
+    # 步骤 3: LLM 归纳提炼（可选）
+    # ------------------------------------------------------------------
+    print("\n🧠 使用 LLM 归纳提炼身份信息...")
+    identity = await summarize_with_llm(raw_identity, soul_content)
+    
+    # 合并 open_id
+    identity["open_id"] = open_id
+    
+    # 如果 LLM 没有返回某些字段，使用原始值
+    for key in ["name", "responsibility", "team_role", "collaboration_rules"]:
+        if key in identity and identity[key]:
+            continue
+        elif key in raw_identity:
+            identity[key] = raw_identity[key]
+    
+    # ------------------------------------------------------------------
+    # 步骤 4: 生成介绍文本
     # ------------------------------------------------------------------
     print("\n✍️  生成介绍文本...")
     introduction = generate_introduction(identity)
     print(f"   文本长度: {len(introduction)} 字符")
     print()
     print("--- 预览 ---")
-    print(introduction[:200] + "..." if len(introduction) > 200 else introduction)
+    print(introduction[:300] + "..." if len(introduction) > 300 else introduction)
     print("---\n")
     
     # ------------------------------------------------------------------
-    # 步骤 3: 获取飞书 Token
+    # 步骤 5: 获取飞书 Token
     # ------------------------------------------------------------------
     print("🔑 获取飞书 Token...")
     try:
@@ -406,7 +533,7 @@ async def send_group_introduction():
         return
     
     # ------------------------------------------------------------------
-    # 步骤 4: 发送消息
+    # 步骤 6: 发送消息
     # ------------------------------------------------------------------
     print(f"\n📤 发送消息到群 {CHAT_ID}...")
     try:
