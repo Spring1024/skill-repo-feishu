@@ -217,6 +217,17 @@ chat_info = await self.get_chat_info(chat_id)
 ...
 thread_id=thread_id,
 channel_prompt=self._resolve_channel_prompt(chat_id, thread_id or None),
+
+
+# 第三处修改
+trigger_message_id = getattr(message, "message_id", None) or None
+reply_to_message_id = trigger_message_id
+...
+normalized = MessageEvent(
+    ...
+    reply_to_message_id=reply_to_message_id,
+    reply_to_text=reply_to_text,
+)
 ```
 
 **修改为**：
@@ -236,9 +247,21 @@ chat_info = await self.get_chat_info(chat_id)
 ...
 thread_id=thread_id,
 channel_prompt=self._resolve_channel_prompt(chat_id, thread_id),
+
+# 第三处修改
+trigger_message_id = getattr(message, "message_id", None) or None
+reply_to_message_id = trigger_message_id
+reply_to_text = None
+...
+normalized = MessageEvent(
+    ...
+    reply_to_message_id=reply_to_message_id,
+    reply_to_text=reply_to_text,
+)
 ```
 
 **效果**：在群聊中回复时，永远只引用 @ 机器人的那条消息，不会形成话题嵌套。
+
 
 ## 七、 超时询问与心跳检测机制
 
