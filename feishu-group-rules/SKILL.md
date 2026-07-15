@@ -1,3 +1,8 @@
+---
+name: feishu-group-rules
+description: 飞书群聊协作规范。消息格式、引用消息结构化隔离、防死循环、超时询问、心跳检测、异常处理。
+---
+
 # 飞书群聊协作规范 (Feishu Group Rules)
 
 > **版本**: v2.1  
@@ -8,20 +13,29 @@
 
 ## 重要说明
 
-**当需要在群聊中 @ 其他 Bot 时，必须使用 `feishu-bot-at` Skill**。
+**当需要在群聊中 @ 其他 Bot 时，使用 `feishu-bot-at` Skill**。
 
 加载方式：
 ```bash
 /skill feishu-bot-at
 ```
 
-规范路径：`~/.hermes/skills/feishu-bot-at/SKILL.md`
+`feishu-bot-at` 提供 @ 消息发送、Bot 信息查询、open_id 获取、防死循环插件等功能。
 
-`feishu-bot-at` 提供了完整的 @ 功能，包括：
-- 发送 @ 消息
-- 查询 Bot 信息
-- 获取 open_id
-- 防死循环插件
+**注意**：`feishu-bot-at` 是独立 Skill，不隶属于本规范。两者配合使用：
+1. 先加载本 Skill（群聊协作规范）
+2. 需要 @ 其他 Bot 时，再加载 `feishu-bot-at`
+
+---
+
+## 安装与加载
+
+本 Skill 通过 `install.py` 脚本自动安装到 SOUL.md，无需手动修改。
+
+安装脚本路径：`scripts/install.py`
+
+参考：[Hook 注入上下文限制](references/hook-context-injection-limitation.md)  
+参考：[引用消息注入格式变更与调试记录](references/reply-context-injection-debug.md)
 
 ---
 # 飞书群聊协作规范 (Feishu Group Rules)
@@ -164,6 +178,55 @@
 - 使用 Bot 的**名称**（如芙蓉、波比、超人强）
 - 必须用方括号包围
 - 紧跟在消息类型标签之前
+
+## 五、 避免话题嵌套
+
+**核心规则**：芙蓉在群聊中回复时，必须使用**新消息**格式，而不是"回复消息"格式。
+
+### 问题描述
+
+飞书"回复消息"功能会创建**话题（Thread）**，导致消息脱离群聊主时间线。当一条消息被多次使用"回复"类型的消息引用时，会自动形成话题，从而脱离群聊。
+
+### 解决方案
+
+Hermes 飞书适配器已修改，强制指定 `parent_id` 为触发机器人的消息 ID，防止话题嵌套。
+
+**修改位置**：`~/.hermes/hermes-agent/plugins/platforms/feishu/adapter.py`
+
+**修改内容**：
+```python
+# 强制指定 parent_id 为触发机器人的消息 ID，防止话题嵌套
+# 永远只引用 @ 机器人的那条消息，而不是透传历史消息链中的 ID
+trigger_message_id = getattr(message, "message_id", None) or None
+reply_to_message_id = trigger_message_id
+```
+
+**效果**：芙蓉在群聊中回复时，永远只引用 @ 机器人的那条消息，不会形成话题嵌套。
+
+### 其他 Agent 安装方式
+
+其他 Agent 如果需要相同的修改，需要：
+
+1. 克隆仓库：
+```bash
+git clone git@github.com:Spring1024/skill-repo-feishu.git
+```
+
+2. 修改适配器代码：
+```bash
+# 找到 adapter.py 中的 reply_to_message_id 赋值逻辑
+# 将 parent_id 替换为 message_id
+```
+
+3. 重启 Gateway：
+```bash
+pkill -f "hermes.*gateway"
+sleep 2
+find ~/.hermes/hermes-agent/plugins/platforms/feishu -name "*.pyc" -delete
+find ~/.hermes/hermes-agent/plugins/platforms/feishu -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+hermes gateway start
+```
+
 
 ## 六、 超时询问与心跳检测机制
 
