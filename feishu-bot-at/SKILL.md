@@ -349,4 +349,3 @@ python3 ~/.hermes/skills/feishu-bot-at/scripts/send-at-message.py \
 
 - `references/adapter-modification-pitfalls.md` — 修改适配器代码后的必要步骤和常见陷阱
 - `references/feishu-reply-quote-injection.md` — 飞书 Bot 引用消息注入机制分析（完整调用链路、已知问题、改进建议）
-- `references/a2a-collaboration-session-20260710.md` — A2A 协作测试记录（open_id 混淆问题、群聊配置影响、测试结果）
