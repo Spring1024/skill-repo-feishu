@@ -217,15 +217,6 @@ API 返回中 `mentions` 数组应包含目标 Bot 的 open_id：
 - [ ] 目标 Bot 开通了 `im:message.group_at_msg.include_bot:readonly` 权限
 - [ ] 发送 Bot 开通了 `im:message:send_as_bot` 权限
 
-## 适配器修改注意事项
-
-修改适配器后必须清除缓存并重启 Gateway。完整步骤见 [`references/adapter-modification-pitfalls.md`](references/adapter-modification-pitfalls.md)。
-
-核心要点：
-- 线程中必须内部 `import httpx`，不能依赖模块级导入
-- 域名属性是 `self._settings.domain_name`，不是 `self._domain`
-- 事件回调中不能阻塞，必须用 `threading.Thread` 异步执行
-
 ## 防死循环插件
 
 当 Bot 之间频繁 @ 可能导致无限循环时，可使用 `scripts/distributed-anti-loop-plugin.py`。
@@ -250,78 +241,6 @@ should_rewrite, payload = await plugin.check_before_send(
     group_owner_open_id="${GROUP_OWNER_OPEN_ID}"
 )
 ```
-
-## 协作语义陷阱：引用消息注入歧义
-
-### 问题描述
-
-当其他 Bot @ 本 Bot 时，如果消息带有**引用（reply/quote）**，飞书适配器会将被引用消息的原文通过 `_fetch_message_text` 获取，并注入到会话上下文中。注入格式为：
-
-```
-[Replying to: "被引用消息的原文"]
-
-其他 Bot 发给本 Bot 的实际消息内容
-```
-
-本 Bot 收到的 `message_text` 中同时包含**引用前缀**和**其他 Bot 的正文**。可能误将引用前缀中的内容当作"用户直接对我说的话"，而不是"其他 Bot 引用的上下文"，从而导致语义判断错误。
-
-### 典型案例
-
-用户 @ 其他 Bot："重新开始一次游戏"
-其他 Bot @ 本 Bot，引用了用户的消息，并附上了新题目：
-```
-收到，本 Bot！我们重新开始。规则：20以内乘法。第一题：2×4=?
-（引用：用户 @ 其他 Bot "重新开始一次游戏"）
-```
-
-本 Bot 收到的完整文本：
-```
-[Replying to: "@其他Bot 重新开始一次游戏。"]
-
-收到，本 Bot！我们重新开始。规则：...
-```
-
-本 Bot 可能错误地认为用户在直接对它说"重新开始一次游戏"，而不是理解这是其他 Bot 的新题目。
-
-### 防护建议
-
-1. **@ 其他 Bot 时，明确标注任务来源**：在消息开头加上 `[任务来自: 其他Bot]` 或类似前缀，帮助接收方 Bot 区分"这是别人转发的"和"这是直接给我的"。
-2. **Gateway 层改进方向**：建议在 Hermes Agent 核心中，将 `reply_to_text` 注入格式改为更明确的标识，如：
-   ```
-   [Quoted context from <sender_name> (<sender_open_id>): "..."]
-   ```
-   这样 Agent 能明确知道引用消息的**来源 Bot**，而非误认为是用户直发。
-3. **当前规避方案**：本 Bot 在处理来自其他 Bot 的 @ 消息时，应优先检查 `mentions` 字段中是否有**非自己**的 Bot 被 @，如果有，则整条消息应视为该 Bot 的指令，而非用户直发。
-
-## 群聊自动介绍
-
-当 Bot 首次被拉入群聊时，适配器会自动发送群介绍。
-
-### 工作原理
-
-1. 飞书推送 `im.chat.member.bot.added_v1` 事件到 Gateway
-2. 适配器 `_on_bot_added_to_chat` 方法捕获事件
-3. 另起线程异步执行：获取 open_id → 读取 SOUL.md → 生成介绍 → 发送消息
-4. 使用 `post` 类型 + `@所有人` + `md` 标签格式
-
-### 前置条件
-
-- 适配器代码已集成 `_send_group_introduction_async` 方法
-- SOUL.md 文件存在（`~/.hermes/SOUL.md`）
-- `.env` 文件包含 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`
-
-### ⚠️ 修改适配器后必须清除 pyc 缓存并重启 Gateway
-
-```bash
-# 1. 清除缓存
-find ~/.hermes/hermes-agent/plugins/platforms/feishu -name "*.pyc" -delete
-find ~/.hermes/hermes-agent/plugins/platforms/feishu -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
-
-# 2. 重启 Gateway（在外部终端执行）
-hermes gateway restart
-```
-
-否则 Gateway 会加载旧代码，入群事件不会触发群介绍。
 
 ## 快速命令
 
@@ -348,4 +267,9 @@ python3 ~/.hermes/skills/feishu-bot-at/scripts/send-at-message.py \
 ## 相关文档
 
 - `references/adapter-modification-pitfalls.md` — 修改适配器代码后的必要步骤和常见陷阱
-- `references/feishu-reply-quote-injection.md` — 飞书 Bot 引用消息注入机制分析（完整调用链路、已知问题、改进建议）
+- `references/feishu-reply-quote-injection.md` — 飞书 Bot 引用消息注入机制分析
+- `scripts/distributed-anti-loop-plugin.py` — 防死循环插件
+- **关联 Skill**：
+  - `feishu-group-rules` — 群聊协作规范（必须先加载）
+  - `feishu-file-collaboration` — 大文件协作（文件通过云空间交换）
+  - `feishu-group-introduction` — 群聊身份介绍

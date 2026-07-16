@@ -42,7 +42,6 @@ platforms: [feishu]
 feishu:
   app_id: "${FEISHU_APP_ID}"
   app_secret: "${FEISHU_APP_SECRET}"
-  # 其他配置...
 ```
 
 ```bash
@@ -67,19 +66,14 @@ FEISHU_APP_SECRET=xxx
    FEISHU_DOMAIN=feishu  # 或 lark
    ```
 
-2. **SOUL.md 文件**：位于 `$HERMES_HOME/SOUL.md` 或 `/data/hermes/SOUL.md`
+2. **SOUL.md 文件**：位于 `~/.hermes/SOUL.md`
 
 3. **Python 依赖**：
    ```bash
    pip install httpx
    ```
 
-4. **LLM API（可选）**：如需 LLM 归纳提炼，配置：
-   ```bash
-   LLM_API_URL=https://api.anthropic.com/v1/messages
-   LLM_API_KEY=sk-xxx
-   LLM_MODEL=claude-sonnet-4-20250514
-   ```
+4. **LLM 归纳提炼（可选）**：如需 LLM 自动提炼 SOUL.md 内容，需额外配置 LLM API
 
 ## 使用方法
 
@@ -154,48 +148,6 @@ SOUL.md 文件
 }
 ```
 
-## 自定义配置
-
-### 修改 SOUL.md 解析规则
-
-编辑 `scripts/send_group_introduction.py` 中的 `extract_raw_identity()` 函数：
-
-```python
-def extract_raw_identity(soul_content: str) -> dict:
-    """从 SOUL.md 内容中提取身份信息"""
-    
-    # 提取名称
-    name_match = re.search(r'你是\s*([^\s（(]+)', identity_lines[0])
-    bot_name = name_match.group(1) if name_match else "未知助手"
-    
-    # 提取核心职责
-    responsibility = '\n'.join(identity_lines[:3])
-    
-    return {
-        "name": bot_name,
-        "responsibility": responsibility,
-        # ... 其他字段
-    }
-```
-
-### 添加新的信息字段
-
-在 `generate_introduction()` 函数中添加：
-
-```python
-def generate_introduction(identity: dict) -> str:
-    # 添加新的字段
-    extra_field = identity.get("extra_field", "无")
-    
-    lines = [
-        f"**大家好！我是{name}。**",
-        f"**额外字段**：{extra_field}",
-        # ... 其他字段
-    ]
-    
-    return "\n".join(lines)
-```
-
 ## 故障排查
 
 ### 问题 1：SOUL.md 找不到
@@ -206,10 +158,6 @@ def generate_introduction(identity: dict) -> str:
 ```bash
 # 检查 SOUL.md 路径
 ls -la ~/.hermes/SOUL.md
-ls -la /data/hermes/SOUL.md
-
-# 设置 HERMES_HOME 环境变量
-export HERMES_HOME=/data/hermes
 ```
 
 ### 问题 2：飞书 API 返回 99992402
@@ -261,20 +209,9 @@ payload = {
 
 ## 版本历史
 
-- **v1.0.2** (2026-07-12)
-  - 新增自动触发机制（适配器集成）
-  - 修复 open_id 获取逻辑（API 优先）
-  - 新增 LLM 归纳提炼功能
-  - 优化消息格式（使用 md 标签替代 lark_md）
-
-- **v1.0.1** (2026-07-11)
-  - 修复 open_id 获取方式
-  - 新增 LLM 归纳功能
-
-- **v1.0.0** (2026-07-11)
-  - 初始版本
-  - 支持自动从 SOUL.md 提取身份信息
-  - 支持 @所有人 功能
+- **v1.0.2** (2026-07-12) — 新增自动触发机制、修复 open_id 获取、优化消息格式
+- **v1.0.1** (2026-07-11) — 修复 open_id 获取、新增 LLM 归纳功能
+- **v1.0.0** (2026-07-11) — 初始版本：支持自动提取 SOUL.md 身份信息、@所有人 功能
 
 ## 许可证
 
