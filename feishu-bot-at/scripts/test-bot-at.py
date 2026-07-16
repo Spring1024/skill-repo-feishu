@@ -7,21 +7,27 @@
 用法:
     python3 test-bot-at.py
     # 或指定目标
-    python3 test-bot-at.py --target-open-id ou_xxx --target-name 波比
+    python3 test-bot-at.py --target-open-id ou_xxx --target-name 目标Bot
+    # 或通过环境变量
+    export FEISHU_APP_ID=cli_xxx
+    export FEISHU_APP_SECRET=xxx
+    python3 test-bot-at.py
 """
 
 import argparse
 import asyncio
 import json
+import os
 import sys
 
 import httpx
 
-DEFAULT_APP_ID = "cli_aada30be933adcba"
-DEFAULT_APP_SECRET = ""${FEISHU_APP_SECRET}""
-DEFAULT_CHAT_ID = "oc_7da955a1c5eab6d20bf62adf4fcd930b"
-DEFAULT_TARGET_OPEN_ID = "ou_cb099e84ffa7033c4a51d4b332f4340f"
-DEFAULT_TARGET_NAME = "波比"
+# 默认配置（必须通过环境变量或命令行参数提供）
+DEFAULT_APP_ID = os.getenv("FEISHU_APP_ID", "")
+DEFAULT_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+DEFAULT_CHAT_ID = os.getenv("FEISHU_CHAT_ID", "")
+DEFAULT_TARGET_OPEN_ID = os.getenv("FEISHU_TARGET_OPEN_ID", "")
+DEFAULT_TARGET_NAME = os.getenv("FEISHU_TARGET_NAME", "目标Bot")
 DEFAULT_API_BASE = "https://open.feishu.cn"
 
 
@@ -48,7 +54,7 @@ async def test_send_at_message(
 ) -> dict:
     """测试发送 @ 消息。"""
     print(f"📋 测试配置:")
-    print(f"   App ID: {app_id}")
+    print(f"   App ID: {app_id[:10]}...")
     print(f"   Chat ID: {chat_id}")
     print(f"   Target: {target_name} ({target_open_id})")
     print()
@@ -72,7 +78,7 @@ async def test_send_at_message(
                 "title": "",
                 "content": [
                     [{"tag": "at", "user_id": target_open_id, "user_name": target_name}],
-                    [{"tag": "md", "text": " 这是一条自动测试消息，来自芙蓉 Bot A2A 测试。"}],
+                    [{"tag": "md", "text": " 这是一条自动测试消息，来自 Bot A2A 测试。"}],
                 ],
             }
         }),
@@ -137,6 +143,19 @@ def main():
     parser.add_argument("--target-name", default=DEFAULT_TARGET_NAME)
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
     args = parser.parse_args()
+    
+    # 检查凭证是否提供
+    if not args.app_id or not args.app_secret:
+        print("❌ 错误：必须提供 app_id 和 app_secret")
+        print("   通过环境变量设置：export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx")
+        print("   或通过命令行参数设置：--app-id cli_xxx --app-secret xxx")
+        sys.exit(1)
+    
+    if not args.target_open_id:
+        print("❌ 错误：必须提供目标 Bot 的 open_id")
+        print("   通过环境变量设置：export FEISHU_TARGET_OPEN_ID=ou_xxx")
+        print("   或通过命令行参数设置：--target-open-id ou_xxx")
+        sys.exit(1)
 
     print("=" * 60)
     print("飞书 Bot 互 @ 功能 - 快速测试")

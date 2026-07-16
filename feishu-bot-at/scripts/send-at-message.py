@@ -31,10 +31,10 @@ from pathlib import Path
 
 import httpx
 
-# 默认配置（可从环境变量覆盖）
-DEFAULT_APP_ID = os.getenv("FEISHU_APP_ID", "cli_aada30be933adcba")
-DEFAULT_APP_SECRET = os.getenv("FEISHU_APP_SECRET", ""${FEISHU_APP_SECRET}"")
-DEFAULT_CHAT_ID = os.getenv("FEISHU_CHAT_ID", "oc_7da955a1c5eab6d20bf62adf4fcd930b")
+# 默认配置（必须通过环境变量或命令行参数提供）
+DEFAULT_APP_ID = os.getenv("FEISHU_APP_ID", "")
+DEFAULT_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+DEFAULT_CHAT_ID = os.getenv("FEISHU_CHAT_ID", "")
 DEFAULT_API_BASE = "https://open.feishu.cn"
 
 
@@ -156,7 +156,14 @@ async def send_at_message(
 
 def main():
     args = parse_args()
-
+    
+    # 检查凭证是否提供
+    if not args.app_id or not args.app_secret:
+        print("❌ 错误：必须提供 app_id 和 app_secret")
+        print("   通过环境变量设置：export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx")
+        print("   或通过命令行参数设置：--app-id cli_xxx --app-secret xxx")
+        sys.exit(1)
+    
     print(f"📤 发送 @{args.target_name} 消息...")
     print(f"   App ID: {args.app_id[:10]}...")
     print(f"   Chat ID: {args.chat_id}")

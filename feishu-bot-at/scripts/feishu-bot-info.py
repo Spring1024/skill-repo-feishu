@@ -18,7 +18,7 @@ import sys
 import httpx
 
 DEFAULT_APP_ID = "cli_aada30be933adcba"
-DEFAULT_APP_SECRET = ""${FEISHU_APP_SECRET}""
+DEFAULT_APP_SECRET = "O8ePQfHizivRmPxPZZwMQgxFWWsjfG2W"
 DEFAULT_API_BASE = "https://open.feishu.cn"
 
 
